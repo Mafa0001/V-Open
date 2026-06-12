@@ -36,128 +36,6 @@
 #ifdef _WIN32
 #include <windows.h>
 #include <tlhelp32.h>
-#include <mmdeviceapi.h>
-#include <audioclient.h>
-#include <atomic>
-
-static std::atomic<float> g_audioLevel{0.f};
-static std::atomic<bool> g_audioExplosionTriggered{false};
-static std::atomic<bool> g_audioThreadRunning{true};
-
-static void audioLoopbackThread() {
-    CoInitialize(nullptr);
-    IMMDeviceEnumerator* enumerator = nullptr;
-    IMMDevice* device = nullptr;
-    IAudioClient* audioClient = nullptr;
-    IAudioCaptureClient* captureClient = nullptr;
-
-    HRESULT hr = CoCreateInstance(__uuidof(MMDeviceEnumerator), nullptr, CLSCTX_ALL, __uuidof(IMMDeviceEnumerator), (void**)&enumerator);
-    if (FAILED(hr)) return;
-
-    while (g_audioThreadRunning) {
-        hr = enumerator->GetDefaultAudioEndpoint(eRender, eConsole, &device);
-        if (FAILED(hr)) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-
-        hr = device->Activate(__uuidof(IAudioClient), CLSCTX_ALL, nullptr, (void**)&audioClient);
-        if (FAILED(hr)) {
-            device->Release();
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-
-        WAVEFORMATEX* pwfx = nullptr;
-        audioClient->GetMixFormat(&pwfx);
-
-        hr = audioClient->Initialize(AUDCLNT_SHAREMODE_SHARED, AUDCLNT_STREAMFLAGS_LOOPBACK, 10000000, 0, pwfx, nullptr);
-        if (FAILED(hr)) {
-            CoTaskMemFree(pwfx);
-            audioClient->Release();
-            device->Release();
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-
-        hr = audioClient->GetService(__uuidof(IAudioCaptureClient), (void**)&captureClient);
-        if (FAILED(hr)) {
-            CoTaskMemFree(pwfx);
-            audioClient->Release();
-            device->Release();
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-
-        hr = audioClient->Start();
-        if (FAILED(hr)) {
-            captureClient->Release();
-            CoTaskMemFree(pwfx);
-            audioClient->Release();
-            device->Release();
-            std::this_thread::sleep_for(std::chrono::seconds(2));
-            continue;
-        }
-
-        while (g_audioThreadRunning) {
-            UINT32 packetLength = 0;
-            hr = captureClient->GetNextPacketSize(&packetLength);
-            if (FAILED(hr) || packetLength == 0) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(5));
-                continue;
-            }
-
-            BYTE* pData = nullptr;
-            UINT32 numFramesRead = 0;
-            DWORD flags = 0;
-            hr = captureClient->GetBuffer(&pData, &numFramesRead, &flags, nullptr, nullptr);
-            if (SUCCEEDED(hr)) {
-                if (!(flags & AUDCLNT_BUFFERFLAGS_SILENT)) {
-                    float maxVal = 0.f;
-                    if (pwfx->wFormatTag == WAVE_FORMAT_EXTENSIBLE) {
-                        WAVEFORMATEXTENSIBLE* pEx = (WAVEFORMATEXTENSIBLE*)pwfx;
-                        if (pEx->SubFormat == KSDATAFORMAT_SUBTYPE_IEEE_FLOAT) {
-                            float* fData = (float*)pData;
-                            for (UINT32 i = 0; i < numFramesRead * pwfx->nChannels; ++i) {
-                                float val = std::abs(fData[i]);
-                                if (val > maxVal) maxVal = val;
-                            }
-                        } else if (pEx->SubFormat == KSDATAFORMAT_SUBTYPE_PCM) {
-                            int16_t* sData = (int16_t*)pData;
-                            for (UINT32 i = 0; i < numFramesRead * pwfx->nChannels; ++i) {
-                                float val = std::abs(sData[i]) / 32768.f;
-                                if (val > maxVal) maxVal = val;
-                            }
-                        }
-                    }
-                    g_audioLevel.store(maxVal);
-
-                    if (maxVal > 0.45f) {
-                        g_audioExplosionTriggered.store(true);
-                    }
-                } else {
-                    g_audioLevel.store(0.f);
-                }
-                captureClient->ReleaseBuffer(numFramesRead);
-            } else {
-                break;
-            }
-            std::this_thread::sleep_for(std::chrono::milliseconds(2));
-        }
-
-        audioClient->Stop();
-        captureClient->Release();
-        CoTaskMemFree(pwfx);
-        audioClient->Release();
-        device->Release();
-    }
-
-    enumerator->Release();
-    CoUninitialize();
-}
-#else
-static std::atomic<bool> g_audioExplosionTriggered{false};
-static std::atomic<bool> g_audioThreadRunning{false};
 #endif
 
 namespace fs = std::filesystem;
@@ -394,6 +272,8 @@ static void loadTrackerSettings(vts::renderer::StudioEnvironment& studio, vts::r
             if (js.contains("grid_color") && js["grid_color"].is_array() && js["grid_color"].size() >= 3)
                 sp.gridColor = glm::vec3(js["grid_color"][0], js["grid_color"][1], js["grid_color"][2]);
             if (js.contains("grid_alpha")) sp.gridAlpha = js["grid_alpha"].get<float>();
+            if (js.contains("reactive_bg")) sp.reactiveBG = js["reactive_bg"].get<bool>();
+            if (js.contains("reactive_speed")) sp.reactiveSpeed = js["reactive_speed"].get<float>();
         }
 
         // Lighting settings
@@ -467,6 +347,8 @@ static void saveTrackerSettings(const vts::renderer::StudioEnvironment& studio, 
     js["grid_extent"] = sp.gridExtent;
     js["grid_color"] = { sp.gridColor.x, sp.gridColor.y, sp.gridColor.z };
     js["grid_alpha"] = sp.gridAlpha;
+    js["reactive_bg"] = sp.reactiveBG;
+    js["reactive_speed"] = sp.reactiveSpeed;
     j["studio"] = js;
 
     // Lighting settings
@@ -616,11 +498,6 @@ int main() {
             } catch (...) {}
         }
     }
-
-#ifdef _WIN32
-    std::thread audioThread(audioLoopbackThread);
-    audioThread.detach();
-#endif
 
     ix::initNetSystem();
     spdlog::set_level(spdlog::level::info);
@@ -987,63 +864,7 @@ int main() {
             auto& sp = studio.params();
             auto& lp = lighting.params();
 
-            // Audio loopback and keyboard explosion trigger
-            static float s_explosionTimer = 0.f;
-            static glm::vec3 s_explosionPos{0.f};
-
-            if (g_audioExplosionTriggered.exchange(false) || (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS)) {
-                if (s_explosionTimer <= 0.01f) {
-                    s_explosionTimer = 1.0f;
-                    
-                    // Determine brightest screen quadrant to accurately position light source
-                    glm::vec3 tl{0.f}, tr{0.f}, bl{0.f}, br{0.f};
-                    getScreenQuadrants(tl, tr, bl, br);
-                    
-                    auto getLum = [](const glm::vec3& c) {
-                        return 0.2126f * c.r + 0.7152f * c.g + 0.0722f * c.b;
-                    };
-                    float lTL = getLum(tl);
-                    float lTR = getLum(tr);
-                    float lBL = getLum(bl);
-                    float lBR = getLum(br);
-                    
-                    glm::vec3 localExplosionOffset(0.f, 0.5f, 0.8f); // fallback center
-                    std::string quadrantName = "Center";
-                    
-                    float maxL = lTL;
-                    localExplosionOffset = glm::vec3(-1.2f, 0.8f, 0.6f);
-                    quadrantName = "Top-Left";
-                    
-                    if (lTR > maxL) {
-                        maxL = lTR;
-                        localExplosionOffset = glm::vec3(1.2f, 0.8f, 0.6f);
-                        quadrantName = "Top-Right";
-                    }
-                    if (lBL > maxL) {
-                        maxL = lBL;
-                        localExplosionOffset = glm::vec3(-1.2f, -0.1f, 0.6f);
-                        quadrantName = "Bottom-Left";
-                    }
-                    if (lBR > maxL) {
-                        maxL = lBR;
-                        localExplosionOffset = glm::vec3(1.2f, -0.1f, 0.6f);
-                        quadrantName = "Bottom-Right";
-                    }
-                    
-                    s_explosionPos = currentFrame.getRootPosition() + localExplosionOffset;
-                    spdlog::info("[Explosion] Triggered point light at {} quadrant. World Pos: ({:.2f}, {:.2f}, {:.2f})", 
-                                 quadrantName, s_explosionPos.x, s_explosionPos.y, s_explosionPos.z);
-                }
-            }
-
-            if (s_explosionTimer > 0.f) {
-                s_explosionTimer -= dt * 1.5f;
-                if (s_explosionTimer < 0.f) s_explosionTimer = 0.f;
-            }
-
-            // Update explosion point light parameters
-            lp.explosionPos = glm::vec4(s_explosionPos, 2.5f); // 2.5m radius
-            lp.explosionColor = glm::vec4(1.0f, 0.35f, 0.05f, s_explosionTimer * 2.5f); // Fade intensity
+            lp.explosionColor = glm::vec4(0.f);
 
             if (s_screenReactiveLighting) {
                 glm::vec3 tl{0.f}, tr{0.f}, bl{0.f}, br{0.f};
@@ -1112,16 +933,7 @@ int main() {
                 }
             }
 
-            // Apply explosion color flash on top of background
-            if (s_explosionTimer > 0.01f) {
-                glm::vec4 flashTop = glm::vec4(1.0f, 0.45f, 0.1f, 1.f);
-                glm::vec4 flashBot = glm::vec4(0.35f, 0.08f, 0.0f, 1.f);
-                float tFlash = s_explosionTimer;
-                
-                sp.bgColorTop = glm::mix(sp.bgColorTop, flashTop, tFlash);
-                sp.bgColorBot = glm::mix(sp.bgColorBot, flashBot, tFlash);
-                sp.bgColor    = glm::mix(sp.bgColor, flashBot, tFlash);
-            }
+
 
             if (s_useAvatar && avatarRenderer.hasModel()) {
                 glm::mat4 modelMat = glm::scale(
@@ -2069,11 +1881,7 @@ int main() {
                                 if (ImGui::SliderFloat("Min Brightness##minbr", &s_screenMinBrightness, 0.0f, 1.0f, "%.2f")) saveSettings();
                                 ImGui::Unindent();
                             }
-                            
-                            ImGui::SeparatorText("Audio Explosion Trigger");
-                            float audioVal = g_audioLevel.load();
-                            ImGui::ProgressBar(audioVal, ImVec2(-1, 0), "");
-                            ImGui::TextDisabled("Real-time loopback level (Explosions trigger above 0.45).");
+
 
                             ImGui::EndTabItem();
                         }
@@ -2144,6 +1952,8 @@ int main() {
                                 sp.bgMode = vts::renderer::BackgroundMode::SolidColor;
                                 sp.bgColor = glm::vec4(0.f, 0.f, 0.f, 0.f);
                                 sp.showGrid = false;
+                                sp.reactiveBG = false;
+                                s_screenReactiveLighting = false;
                                 s_streamMode = true;
                                 studio.rebuildGrid();
                                 saveSettings();

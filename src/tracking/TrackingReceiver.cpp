@@ -129,16 +129,16 @@ bool TrackingReceiver::parseFrame(const std::string& raw, TrackingFrame& out) co
 
         // ── Hand landmarks ────────────────────────────────────────────────────
         if (keyPresent(j, "left_hand")) {
-            out.rightHand = parseLandmarkArray(j["left_hand"]);
-            for (auto& lm : out.rightHand) {
+            out.leftHand = parseLandmarkArray(j["left_hand"]);
+            for (auto& lm : out.leftHand) {
                 lm.x = -lm.x;
                 lm.y = -lm.y;
                 lm.z = -lm.z;
             }
         }
         if (keyPresent(j, "right_hand")) {
-            out.leftHand = parseLandmarkArray(j["right_hand"]);
-            for (auto& lm : out.leftHand) {
+            out.rightHand = parseLandmarkArray(j["right_hand"]);
+            for (auto& lm : out.rightHand) {
                 lm.x = -lm.x;
                 lm.y = -lm.y;
                 lm.z = -lm.z;

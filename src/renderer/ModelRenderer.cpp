@@ -2275,7 +2275,6 @@ void ModelRenderer::Impl::applyCPUMorphTargets(rhi::IRHIContext& rhi) {
         // Re-use cache buffer to avoid heap allocation
         auto& morphedData = morphedDataBuffer;
         morphedData.assign(mp.baseVertexData.begin(), mp.baseVertexData.end());
-        const auto& targetWeights = meshIt->second;
         
         const auto& sparseTargets = sparseMorphTargets[pi];
         for (const auto& target : sparseTargets) {

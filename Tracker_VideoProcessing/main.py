@@ -500,36 +500,41 @@ class MotionTracker:
     def _face_world_anchored(self, face_r, pose_world_lms):
         if not face_r or not face_r.face_landmarks:
             return None
-
-        # Check if we can use MediaPipe's native face_world_landmarks (un-squished, Y-up)
-        if hasattr(face_r, 'face_world_landmarks') and face_r.face_world_landmarks:
-            face_world_lms = face_r.face_world_landmarks[0]
-            pose_nose = np.array([0.0, 0.0, 0.0])
-            if pose_world_lms and len(pose_world_lms) > 0:
-                pw = pose_world_lms[0]
-                pose_nose = np.array([pw.x, pw.y, pw.z])
-            fl = face_world_lms[1]  # Nose tip in face mesh
-            face_nose = np.array([fl.x, fl.y, fl.z])
-
-            out = []
-            for lm in face_world_lms:
-                # Negate X relative to face_nose to match standard normalized X-right direction (which C++ expects to invert)
-                dx = -(lm.x - face_nose[0])
-                # Y is Y-up internally in Python (to keep compute_head_euler happy)
-                dy = lm.y - face_nose[1]
-                dz = lm.z - face_nose[2]
-                out.append({
-                    "x": float(pose_nose[0] + dx),
-                    "y": float(pose_nose[1] + dy),
-                    "z": float(pose_nose[2] + dz),
-                    "visibility": 1.0
-                })
-            return out
-
-        face_lms = face_r.face_landmarks[0]
-        if not pose_world_lms or len(pose_world_lms) < 13:
-            return self._lms_to_dicts(face_lms)
         try:
+            # Check if we can use MediaPipe's native face_world_landmarks (un-squished, Y-up)
+            if hasattr(face_r, 'face_world_landmarks') and face_r.face_world_landmarks:
+                face_world_lms = face_r.face_world_landmarks[0]
+                if len(face_world_lms) < 2:
+                    return None
+                pose_nose = np.array([0.0, 0.0, 0.0])
+                if pose_world_lms and len(pose_world_lms) > 0:
+                    pw = pose_world_lms[0]
+                    pose_nose = np.array([pw.x, pw.y, pw.z])
+                fl = face_world_lms[1]  # Nose tip in face mesh
+                face_nose = np.array([fl.x, fl.y, fl.z])
+
+                out = []
+                for lm in face_world_lms:
+                    # Negate X relative to face_nose to match standard normalized X-right direction (which C++ expects to invert)
+                    dx = -(lm.x - face_nose[0])
+                    # Y is Y-up internally in Python (to keep compute_head_euler happy)
+                    dy = lm.y - face_nose[1]
+                    dz = lm.z - face_nose[2]
+                    out.append({
+                        "x": float(pose_nose[0] + dx),
+                        "y": float(pose_nose[1] + dy),
+                        "z": float(pose_nose[2] + dz),
+                        "visibility": 1.0
+                    })
+                return out
+
+            face_lms = face_r.face_landmarks[0]
+            if not pose_world_lms or len(pose_world_lms) < 13:
+                return self._lms_to_dicts(face_lms)
+            
+            if len(face_lms) < 153:
+                return self._lms_to_dicts(face_lms)
+
             nose_w = np.array([pose_world_lms[0].x, pose_world_lms[0].y, pose_world_lms[0].z], dtype=np.float32)
             ls_w = np.array([pose_world_lms[11].x, pose_world_lms[11].y, pose_world_lms[11].z], dtype=np.float32)
             rs_w = np.array([pose_world_lms[12].x, pose_world_lms[12].y, pose_world_lms[12].z], dtype=np.float32)
@@ -558,8 +563,9 @@ class MotionTracker:
                     "visibility": 1.0
                 })
             return out or None
-        except:
-            return self._lms_to_dicts(face_lms)
+        except Exception as e:
+            print(f"Error in _face_world_anchored: {e}")
+            return self._lms_to_dicts(face_r.face_landmarks[0]) if face_r.face_landmarks else None
 
     def _extract_blink(self, face_r):
         if not face_r or not face_r.face_blendshapes: return 0.0

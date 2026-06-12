@@ -57,6 +57,9 @@ void main() {
     if (albedo.a < 0.01) discard;
 
     vec3 N = normalize(vNormal);
+    if (!gl_FrontFacing) {
+        N = -N;
+    }
 
     vec3 lit = albedo.rgb * uAmbient.rgb;
 
