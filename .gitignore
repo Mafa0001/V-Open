@@ -1,0 +1,38 @@
+# IDEs
+.idea/
+.vscode/
+*.suo
+*.user
+*.userossc
+*.sln.docstates
+
+# Build outputs
+build/
+cmake-build-debug/
+cmake-build-release/
+out/
+bin/
+x64/
+x86/
+
+# Package managers & dependencies
+vcpkg_installed/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Local/temporary files
+*.log
+tracker_settings.json
+tracker_port.txt
+tracker_output.log
+model.vrm
+avatar.glb
+model.gltf
+avatar.vrm
+models/
+*.spv
+
+# Git
+.gemini/
